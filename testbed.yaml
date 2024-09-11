@@ -1,0 +1,18 @@
+---
+devices:
+  Cat8000V:
+    alias: "Sandbox Router"
+    type: "router"
+    os: "iosxe"
+    platform: Cat8000V
+    credentials:
+      default:
+        username: admin
+        password: C1sco12345
+    connections:
+      cli:
+        protocol: ssh
+        ip: devnetsandboxiosxe.cisco.com
+        port: 22
+        arguments:
+          connection_timeout: 360
