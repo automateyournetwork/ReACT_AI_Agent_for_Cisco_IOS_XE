@@ -4,7 +4,7 @@ devices:
     alias: "Sandbox Router"
     type: "router"
     os: "iosxe"
-    platform: Cat8000V
+    platform: CSR1kv
     credentials:
       default:
         username: admin

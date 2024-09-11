@@ -92,9 +92,37 @@ def show_access_lists():
         # Handle exceptions and provide error information
         return {"error": str(e)}
 
+# Tool function to connect to the router and run 'show ip route' using pyATS
+def show_version():
+    try:
+        # Load the testbed
+        print("Loading testbed...")
+        testbed = loader.load('testbed.yaml')
+        
+        # Access the device from the testbed
+        device = testbed.devices['Cat8000V']
+        
+        # Connect to the device
+        print("Connecting to device...")
+        device.connect()
+
+        # Execute the 'show version' command to get the running configuration
+        print("Executing 'show version'...")
+        running_config = device.parse("show version")
+        
+        # Close the connection
+        print("Disconnecting from device...")
+        device.disconnect()
+
+        # Return running configuration (string)
+        return running_config
+    except Exception as e:
+        # Handle exceptions and provide error information
+        return {"error": str(e)}
+    
 # Define the custom tools using the langchain `tool` decorator
 @tool
-def show_interface_tool(dummy_input: str = "default") -> dict:
+def show_ip_inteface_brief_tool(dummy_input: str = "default") -> dict:
     """Execute the 'show ip interface brief' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
     return show_ip_interface_brief()
 
@@ -108,6 +136,11 @@ def show_access_lists_tool(dummy_input: str = "default") -> str:
     """Execute the 'show_access_lists' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
     return show_access_lists()
 
+@tool
+def show_version_tool(dummy_input: str = "default") -> str:
+    """Execute the 'show_version' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
+    return show_version()
+
 # ============================================================
 # Define the agent with a custom prompt template
 # ============================================================
@@ -116,7 +149,7 @@ def show_access_lists_tool(dummy_input: str = "default") -> str:
 llm = Ollama(model="llama3.1")
 
 # Create a list of tools
-tools = [show_interface_tool, show_ip_route_tool, show_access_lists_tool]
+tools = [show_ip_inteface_brief_tool, show_ip_route_tool, show_access_lists_tool, show_version_tool]
 
 # Render text descriptions for the tools for inclusion in the prompt
 tool_descriptions = render_text_description(tools)
@@ -201,7 +234,7 @@ agent = create_react_agent(llm, tools, prompt_template)
 agent_executor = AgentExecutor(agent=agent, tools=tools, handle_parsing_errors=True, verbose=True, format="json")
 
 # Define the input question
-input_question = "What are the names of my access-lists?"
+input_question = "What Cisco IOS-XE version am I running?"
 
 # Provide the input to the agent, including chat history
 response = agent_executor.invoke({
