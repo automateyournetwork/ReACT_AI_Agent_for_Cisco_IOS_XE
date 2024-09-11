@@ -1,0 +1,2 @@
+pyats[full]
+langchain_community
