@@ -1,8 +1,10 @@
+import streamlit as st
 from pyats.topology import loader
 from langchain_community.llms import Ollama
 from langchain_core.tools import tool, render_text_description
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.prompts import PromptTemplate
+
 
 # ============================================================
 # Define the pyATS tools
@@ -229,22 +231,56 @@ prompt_template = PromptTemplate(
 agent = create_react_agent(llm, tools, prompt_template)
 
 # ============================================================
-# Test the agent
+# Streamlit App
 # ============================================================
+
+# Initialize the agent executor
 agent_executor = AgentExecutor(agent=agent, tools=tools, handle_parsing_errors=True, verbose=True, format="json")
 
-# Define the input question
-input_question = "What Cisco IOS-XE version am I running?"
+# Initialize Streamlit
+st.title("ReAct AI Agent with pyATS and LangChain")
+st.write("Ask your network questions and get insights using AI!")
 
-# Provide the input to the agent, including chat history
-response = agent_executor.invoke({
-    "input": input_question,
-    "chat_history": "",  # Initialize chat history as an empty string
-    "agent_scratchpad": ""  # Initialize agent scratchpad as an empty string
-})
+# Input for user questions
+user_input = st.text_input("Enter your question:")
 
-# Extract and print the final answer
-final_answer = response.get('output', 'No answer provided.')
+# Session state to store chat history
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = ""
 
-# Print the input question and final answer
-print(f"Question: {input_question}\nFinal Answer: {final_answer}")
+if "conversation" not in st.session_state:
+    st.session_state.conversation = []
+
+# Button to submit the question
+if st.button("Send"):
+    if user_input:
+        # Add the user input to the conversation history
+        st.session_state.conversation.append({"role": "user", "content": user_input})
+
+        # Invoke the agent with the user input and current chat history
+        response = agent_executor.invoke({
+            "input": user_input,
+            "chat_history": st.session_state.chat_history,
+            "agent_scratchpad": ""  # Initialize agent scratchpad as an empty string
+        })
+
+        # Extract the final answer
+        final_answer = response.get('output', 'No answer provided.')
+
+        # Display the question and answer
+        st.write(f"**Question:** {user_input}")
+        st.write(f"**Answer:** {final_answer}")
+
+        # Add the response to the conversation history
+        st.session_state.conversation.append({"role": "assistant", "content": final_answer})
+
+        # Update chat history with the new conversation
+        st.session_state.chat_history = "\n".join(
+            [f"{entry['role'].capitalize()}: {entry['content']}" for entry in st.session_state.conversation]
+        )
+
+# Display the entire conversation history
+if st.session_state.conversation:
+    st.write("## Conversation History")
+    for entry in st.session_state.conversation:
+        st.write(f"**{entry['role'].capitalize()}:** {entry['content']}")

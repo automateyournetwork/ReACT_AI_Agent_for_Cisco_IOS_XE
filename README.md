@@ -20,7 +20,9 @@ input_question = "What Cisco IOS-XE version am I running?"
 ```
 
 To the question you want to ask then just run 
-(REACTAGENT) ~/ReACT_AI_Agent_for_Cisco_IOS_XE$ python3 reacti_ai_agent_cisco_ios_xe.py
+(REACTAGENT) ~/ReACT_AI_Agent_for_Cisco_IOS_XE$ streamlit run reacti_ai_agent_cisco_ios_xe.py
+
+Visit localhost:8501 
 
 ### Please add more 'tools' / functions / parsed pyATS commands! 
 
