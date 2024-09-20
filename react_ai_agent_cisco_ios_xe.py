@@ -1,147 +1,131 @@
+import os
+import json
+import difflib
 import streamlit as st
 from pyats.topology import loader
 from langchain_community.llms import Ollama
 from langchain_core.tools import tool, render_text_description
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.prompts import PromptTemplate
+from genie.libs.parser.utils import get_parser
 
-
-# ============================================================
-# Define the pyATS tools
-# ============================================================
-
-# Tool function to connect to the router and run 'show ip interface brief' using pyATS
-def show_ip_interface_brief():
+# Function to run any supported show command using pyATS
+def run_show_command(command: str):
     try:
+        # Disallowed modifiers
+        disallowed_modifiers = ['|', 'include', 'exclude', 'begin', 'redirect', '>', '<']
+
+        # Check for disallowed modifiers
+        for modifier in disallowed_modifiers:
+            if modifier in command:
+                return {"error": f"Command '{command}' contains disallowed modifier '{modifier}'. Modifiers are not allowed."}
+
         # Load the testbed
         print("Loading testbed...")
         testbed = loader.load('testbed.yaml')
-        
+
         # Access the device from the testbed
         device = testbed.devices['Cat8000V']
-        
+
         # Connect to the device
         print("Connecting to device...")
         device.connect()
 
-        # Execute the 'show ip interface brief' command and parse output using Genie (which returns JSON)
-        print("Executing 'show ip interface brief'...")
-        parsed_output = device.parse("show ip interface brief")
-        
+        # Check if a pyATS parser is available for the command
+        print(f"Checking if a parser exists for the command: {command}")
+        parser = get_parser(command, device)
+        if parser is None:
+            return {"error": f"No parser available for the command: {command}"}
+
+        # Execute the command and parse the output using Genie
+        print(f"Executing '{command}'...")
+        parsed_output = device.parse(command)
+
         # Close the connection
         print("Disconnecting from device...")
         device.disconnect()
 
-        # Return parsed output (JSON)
+        # Return the parsed output (JSON)
         return parsed_output
     except Exception as e:
         # Handle exceptions and provide error information
         return {"error": str(e)}
 
-# Tool function to connect to the router and run 'show ip route' using pyATS
-def show_ip_route():
+# Function to load supported commands from a JSON file
+def load_supported_commands():
+    file_path = 'commands.json'  # Ensure the file is named correctly
+
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        return {"error": f"Supported commands file '{file_path}' not found."}
+
     try:
-        # Load the testbed
-        print("Loading testbed...")
-        testbed = loader.load('testbed.yaml')
-        
-        # Access the device from the testbed
-        device = testbed.devices['Cat8000V']
-        
-        # Connect to the device
-        print("Connecting to device...")
-        device.connect()
+        # Load the JSON file with the list of commands
+        with open(file_path, 'r') as f:
+            data = json.load(f)
 
-        # Execute the 'show ip route' command to get the running configuration
-        print("Executing 'show ip route'...")
-        running_config = device.parse("show ip route")
-        
-        # Close the connection
-        print("Disconnecting from device...")
-        device.disconnect()
-
-        # Return running configuration (string)
-        return running_config
+        # Extract the command strings into a list
+        command_list = [entry['command'] for entry in data]
+        return command_list
     except Exception as e:
-        # Handle exceptions and provide error information
-        return {"error": str(e)}
+        return {"error": f"Error loading supported commands: {str(e)}"}
 
-# Tool function to connect to the router and run 'show ip route' using pyATS
-def show_access_lists():
-    try:
-        # Load the testbed
-        print("Loading testbed...")
-        testbed = loader.load('testbed.yaml')
-        
-        # Access the device from the testbed
-        device = testbed.devices['Cat8000V']
-        
-        # Connect to the device
-        print("Connecting to device...")
-        device.connect()
+# Function to check if a command is supported with fuzzy matching
+def check_command_support(command: str) -> dict:
+    command_list = load_supported_commands()
 
-        # Execute the 'show access-lists' command to get the running configuration
-        print("Executing 'show access-lists'...")
-        running_config = device.parse("show access-lists")
-        
-        # Close the connection
-        print("Disconnecting from device...")
-        device.disconnect()
+    if "error" in command_list:
+        return command_list
 
-        # Return running configuration (string)
-        return running_config
-    except Exception as e:
-        # Handle exceptions and provide error information
-        return {"error": str(e)}
+    # Find the closest matches to the input command using difflib
+    close_matches = difflib.get_close_matches(command, command_list, n=1, cutoff=0.6)
 
-# Tool function to connect to the router and run 'show ip route' using pyATS
-def show_version():
-    try:
-        # Load the testbed
-        print("Loading testbed...")
-        testbed = loader.load('testbed.yaml')
-        
-        # Access the device from the testbed
-        device = testbed.devices['Cat8000V']
-        
-        # Connect to the device
-        print("Connecting to device...")
-        device.connect()
+    if close_matches:
+        closest_command = close_matches[0]
+        return {"status": "supported", "closest_command": closest_command}
+    else:
+        return {"status": "unsupported", "message": f"The command '{command}' is not supported. Please check the available commands."}
 
-        # Execute the 'show version' command to get the running configuration
-        print("Executing 'show version'...")
-        running_config = device.parse("show version")
-        
-        # Close the connection
-        print("Disconnecting from device...")
-        device.disconnect()
+# Function to process agent response and chain tools
+def process_agent_response(response):
+    if response.get("status") == "supported" and "next_tool" in response.get("action", {}):
+        next_tool = response["action"]["next_tool"]
+        command_input = response["action"]["input"]
 
-        # Return running configuration (string)
-        return running_config
-    except Exception as e:
-        # Handle exceptions and provide error information
-        return {"error": str(e)}
-    
-# Define the custom tools using the langchain `tool` decorator
+        # Automatically invoke the next tool (run_show_command_tool)
+        return agent_executor.invoke({
+            "input": command_input,
+            "chat_history": st.session_state.chat_history,
+            "agent_scratchpad": "",
+            "tool": next_tool
+        })
+    else:
+        return response
+
+# Define the custom tool using the langchain `tool` decorator
 @tool
-def show_ip_inteface_brief_tool(dummy_input: str = "default") -> dict:
-    """Execute the 'show ip interface brief' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
-    return show_ip_interface_brief()
+def run_show_command_tool(command: str) -> dict:
+    """Execute a 'show' command on the router using pyATS and return the parsed JSON output."""
+    return run_show_command(command)
 
+# New tool for checking if a command is supported and chaining to run_show_command_tool
 @tool
-def show_ip_route_tool(dummy_input: str = "default") -> str:
-    """Execute the 'show ip route' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
-    return show_ip_route()
+def check_supported_command_tool(command: str) -> dict:
+    """Check if a command is supported by pyATS based on the command list and return the details."""
+    result = check_command_support(command)
 
-@tool
-def show_access_lists_tool(dummy_input: str = "default") -> str:
-    """Execute the 'show_access_lists' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
-    return show_access_lists()
-
-@tool
-def show_version_tool(dummy_input: str = "default") -> str:
-    """Execute the 'show_version' command on the router using pyATS and return the parsed JSON output. The input is ignored."""
-    return show_version()
+    if result.get('status') == 'supported':
+        # Automatically run the show command if the command is valid
+        closest_command = result['closest_command']
+        return {
+            "status": "supported",
+            "message": f"The closest supported command is '{closest_command}'",
+            "action": {
+                "next_tool": "run_show_command_tool",
+                "input": closest_command
+            }
+        }
+    return result
 
 # ============================================================
 # Define the agent with a custom prompt template
@@ -151,7 +135,7 @@ def show_version_tool(dummy_input: str = "default") -> str:
 llm = Ollama(model="llama3.1")
 
 # Create a list of tools
-tools = [show_ip_inteface_brief_tool, show_ip_route_tool, show_access_lists_tool, show_version_tool]
+tools = [run_show_command_tool, check_supported_command_tool]
 
 # Render text descriptions for the tools for inclusion in the prompt
 tool_descriptions = render_text_description(tools)
@@ -163,48 +147,57 @@ Assistant is designed to assist with a wide range of tasks, from answering simpl
 
 Assistant is constantly learning and improving. It can process and understand large amounts of text and use this knowledge to provide accurate and informative responses to a wide range of questions. Additionally, Assistant can generate its text based on the input it receives, allowing it to engage in discussions and provide explanations and descriptions on various topics.
 
-Overall, Assistant is a powerful tool that can help with a wide range of tasks and provide valuable insights and information. Whether you need help with a specific question or want to have a conversation about a particular topic, Assistant is here to assist.
-
 NETWORK INSTRUCTIONS:
 
-Assistant is a network assistant with the capability to run tools to gather information and provide accurate answers. You MUST ONLY use the provided tools for checking interface statuses or retrieving the running configuration.
+Assistant is a network assistant with the capability to run tools to gather information and provide accurate answers. You MUST use the provided tools for checking interface statuses, retrieving the running configuration, or finding which commands are supported.
 
-To use a tool, please use the following format:
+**Important Guidelines:**
 
-Thought: Do I need to use a tool? Yes  
-Action: the action to take, should be one of [{tool_names}]  
-Action Input: the input to the action (it will be ignored by the tool)  
-Observation: the result of the action  
+1. **If you are certain of the command, use the 'run_show_command_tool' to execute it.**
+2. **If you are unsure of the command or if there is ambiguity, use the 'check_supported_command_tool' to verify the command or get a list of available commands.**
+3. **If the 'check_supported_command_tool' finds a valid command, automatically use 'run_show_command_tool' to run that command.**
+4. **Do NOT use any command modifiers such as pipes (`|`), `include`, `exclude`, `begin`, `redirect`, or any other modifiers.**
+5. **If the command is not recognized, always use the 'check_supported_command_tool' to clarify the command before proceeding.**
+
+**Using the Tools:**
+
+- If you are confident about the command, use the 'run_show_command_tool'.
+- If there is any doubt or ambiguity, always check the command first with the 'check_supported_command_tool'.
+
+To use a tool, follow this format:
+
+Thought: Do I need to use a tool? Yes
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+
+If the first tool provides a valid command, you MUST immediately run the 'run_show_command_tool' without waiting for another input. Follow the flow like this:
+
+Example:
+
+Thought: Do I need to use a tool? Yes
+Action: check_supported_command_tool
+Action Input: "show ip access-lists"
+Observation: "The closest supported command is 'show ip access-list'."
+
+Thought: Do I need to use a tool? Yes
+Action: run_show_command_tool
+Action Input: "show ip access-list"
+Observation: [parsed output here]
+
 When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
 
-Thought: Do I need to use a tool? No  
-Action: Display [your response here]  
+Thought: Do I need to use a tool? No
+Final Answer: [your response here]
 
-IMPORTANT GUIDELINES:
-
-Tool Selection: Only use the tool that is necessary to answer the question. For example:
-
-If the question is about IP addresses or interface status, start by using the show ip interface brief tool.
-Use show run only if the question explicitly requires detailed configuration that show ip interface brief cannot provide.
-Check After Each Tool Use: After using a tool, check if you already have enough information to answer the question. If yes, provide the final answer immediately and do not use another tool.
-
-For example, if asked about the IP address of Loopback0, after retrieving the data from 'show ip interface brief', respond as follows:
-
-
-Thought: Do I need to use a tool? No  
-Final Answer: The IP address for Loopback0 is 10.0.0.1.  
-
-Avoid Repetition: If you have already provided a final answer, do not repeat it or perform additional steps. The conversation should end there.
-
-Correct Formatting is Essential: Make sure every response follows the format strictly to avoid errors. Use "Final Answer" to deliver the final output.
-
-Handling Errors or Invalid Tool Usage: If an invalid action is taken or if there is an error, correct the thought process and provide the accurate answer directly without repeating unnecessary steps.
+Correct Formatting is Essential: Ensure that every response follows the format strictly to avoid errors.
 
 TOOLS:
 
 Assistant has access to the following tools:
 
-{tools}
+- check_supported_command_tool: Finds and returns the closest supported commands.
+- run_show_command_tool: Executes a supported 'show' command on the network device and returns the parsed output.
 
 Begin!
 
@@ -218,13 +211,16 @@ New input: {input}
 """
 
 # Define the input variables separately
-input_variables = ["input", "tools", "tool_names", "agent_scratchpad", "chat_history"]
+input_variables = ["input", "agent_scratchpad", "chat_history"]
 
 # Create the PromptTemplate using the complete template and input variables
 prompt_template = PromptTemplate(
     template=template,
     input_variables=input_variables,
-    partial_variables={"tools": tool_descriptions, "tool_names": ", ".join([t.name for t in tools])}
+    partial_variables={
+        "tools": tool_descriptions,
+        "tool_names": ", ".join([t.name for t in tools])
+    }
 )
 
 # Create the ReAct agent using the Ollama LLM, tools, and custom prompt template
@@ -235,7 +231,7 @@ agent = create_react_agent(llm, tools, prompt_template)
 # ============================================================
 
 # Initialize the agent executor
-agent_executor = AgentExecutor(agent=agent, tools=tools, handle_parsing_errors=True, verbose=True, format="json")
+agent_executor = AgentExecutor(agent=agent, tools=tools, handle_parsing_errors=True, verbose=True, max_iterations=5)
 
 # Initialize Streamlit
 st.title("ReAct AI Agent with pyATS and LangChain")
@@ -264,8 +260,11 @@ if st.button("Send"):
             "agent_scratchpad": ""  # Initialize agent scratchpad as an empty string
         })
 
+        # Check if chaining is needed (i.e., next tool)
+        final_response = process_agent_response(response)
+
         # Extract the final answer
-        final_answer = response.get('output', 'No answer provided.')
+        final_answer = final_response.get('output', 'No answer provided.')
 
         # Display the question and answer
         st.write(f"**Question:** {user_input}")
