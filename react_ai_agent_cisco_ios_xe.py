@@ -3,7 +3,8 @@ import json
 import difflib
 import streamlit as st
 from pyats.topology import loader
-from langchain_community.llms import Ollama
+from langchain_community.chat_models import ChatOpenAI
+#from langchain_community.llms import Ollama
 from langchain_core.tools import tool, render_text_description
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.prompts import PromptTemplate
@@ -102,6 +103,34 @@ def process_agent_response(response):
     else:
         return response
 
+# Function to apply configuration using pyATS
+def apply_device_configuration(config_commands: str):
+    try:
+        # Load the testbed
+        print("Loading testbed...")
+        testbed = loader.load('testbed.yaml')
+
+        # Access the device from the testbed
+        device = testbed.devices['Cat8000V']
+
+        # Connect to the device
+        print("Connecting to device...")
+        device.connect()
+
+        # Apply the configuration
+        print(f"Applying configuration:\n{config_commands}")
+        device.configure(config_commands)
+
+        # Close the connection
+        print("Disconnecting from device...")
+        device.disconnect()
+
+        # Return a success message
+        return {"status": "success", "message": "Configuration applied successfully."}
+    except Exception as e:
+        # Handle exceptions and provide error information
+        return {"error": str(e)}
+
 # Define the custom tool using the langchain `tool` decorator
 @tool
 def run_show_command_tool(command: str) -> dict:
@@ -127,20 +156,27 @@ def check_supported_command_tool(command: str) -> dict:
         }
     return result
 
+# Define the custom tool for configuration changes
+@tool
+def apply_configuration_tool(config_commands: str) -> dict:
+    """Apply configuration commands on the router using pyATS."""
+    return apply_device_configuration(config_commands)
+
 # ============================================================
 # Define the agent with a custom prompt template
 # ============================================================
 
-# Initialize the Ollama LLM
-llm = Ollama(model="llama3.1")
+# Initialize the LLM (you can replace 'gpt-3.5-turbo' with your desired model)
+#llm = Ollama(model="llama3.1", temperature=0)
+llm = ChatOpenAI(model_name="gpt-4o")
 
 # Create a list of tools
-tools = [run_show_command_tool, check_supported_command_tool]
+tools = [run_show_command_tool, check_supported_command_tool, apply_configuration_tool]
 
 # Render text descriptions for the tools for inclusion in the prompt
 tool_descriptions = render_text_description(tools)
 
-template = """
+template = '''
 Assistant is a large language model trained by OpenAI.
 
 Assistant is designed to assist with a wide range of tasks, from answering simple questions to providing in-depth explanations and discussions on various topics. As a language model, Assistant can generate human-like text based on the input it receives, allowing it to engage in natural-sounding conversations and provide coherent and relevant responses.
@@ -149,45 +185,61 @@ Assistant is constantly learning and improving. It can process and understand la
 
 NETWORK INSTRUCTIONS:
 
-Assistant is a network assistant with the capability to run tools to gather information and provide accurate answers. You MUST use the provided tools for checking interface statuses, retrieving the running configuration, or finding which commands are supported.
+Assistant is a network assistant with the capability to run tools to gather information, configure the network, and provide accurate answers. You MUST use the provided tools for checking interface statuses, retrieving the running configuration, configuring settings, or finding which commands are supported.
 
 **Important Guidelines:**
 
-1. **If you are certain of the command, use the 'run_show_command_tool' to execute it.**
+1. **If you are certain of the command for retrieving information, use the 'run_show_command_tool' to execute it.**
 2. **If you are unsure of the command or if there is ambiguity, use the 'check_supported_command_tool' to verify the command or get a list of available commands.**
 3. **If the 'check_supported_command_tool' finds a valid command, automatically use 'run_show_command_tool' to run that command.**
-4. **Do NOT use any command modifiers such as pipes (`|`), `include`, `exclude`, `begin`, `redirect`, or any other modifiers.**
-5. **If the command is not recognized, always use the 'check_supported_command_tool' to clarify the command before proceeding.**
+4. **For configuration changes, use the 'apply_configuration_tool' with the necessary configuration string (single or multi-line).**
+5. **Do NOT use any command modifiers such as pipes (`|`), `include`, `exclude`, `begin`, `redirect`, or any other modifiers.**
+6. **If the command is not recognized, always use the 'check_supported_command_tool' to clarify the command before proceeding.**
 
 **Using the Tools:**
 
-- If you are confident about the command, use the 'run_show_command_tool'.
+- If you are confident about the command to retrieve data, use the 'run_show_command_tool'.
 - If there is any doubt or ambiguity, always check the command first with the 'check_supported_command_tool'.
+- If you need to apply a configuration change, use 'apply_configuration_tool' with the appropriate configuration commands.
 
 To use a tool, follow this format:
 
-Thought: Do I need to use a tool? Yes
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
+Thought: Do I need to use a tool? Yes  
+Action: the action to take, should be one of [{tool_names}]  
+Action Input: the input to the action  
+Observation: the result of the action  
 
 If the first tool provides a valid command, you MUST immediately run the 'run_show_command_tool' without waiting for another input. Follow the flow like this:
 
 Example:
 
-Thought: Do I need to use a tool? Yes
-Action: check_supported_command_tool
-Action Input: "show ip access-lists"
-Observation: "The closest supported command is 'show ip access-list'."
+Thought: Do I need to use a tool? Yes  
+Action: check_supported_command_tool  
+Action Input: "show ip access-lists"  
+Observation: "The closest supported command is 'show ip access-list'."  
 
-Thought: Do I need to use a tool? Yes
-Action: run_show_command_tool
-Action Input: "show ip access-list"
-Observation: [parsed output here]
+Thought: Do I need to use a tool? Yes  
+Action: run_show_command_tool  
+Action Input: "show ip access-list"  
+Observation: [parsed output here]  
+
+If you need to apply a configuration:
+
+Example:
+
+Thought: Do I need to use a tool? Yes  
+Action: apply_configuration_tool  
+Action Input: """  
+interface loopback 100  
+description AI Created  
+ip address 10.10.100.100 255.255.255.0  
+no shutdown  
+"""  
+Observation: "Configuration applied successfully."
 
 When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
 
-Thought: Do I need to use a tool? No
+Thought: Do I need to use a tool? No  
 Final Answer: [your response here]
 
 Correct Formatting is Essential: Ensure that every response follows the format strictly to avoid errors.
@@ -198,6 +250,7 @@ Assistant has access to the following tools:
 
 - check_supported_command_tool: Finds and returns the closest supported commands.
 - run_show_command_tool: Executes a supported 'show' command on the network device and returns the parsed output.
+- apply_configuration_tool: Applies the provided configuration commands on the network device.
 
 Begin!
 
@@ -208,7 +261,7 @@ Previous conversation history:
 New input: {input}
 
 {agent_scratchpad}
-"""
+'''
 
 # Define the input variables separately
 input_variables = ["input", "agent_scratchpad", "chat_history"]
