@@ -1,3 +1,4 @@
 pyats[full]
 langchain_community
 streamlit
+openai
