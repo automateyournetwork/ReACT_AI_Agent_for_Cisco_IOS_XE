@@ -131,6 +131,62 @@ def apply_device_configuration(config_commands: str):
         # Handle exceptions and provide error information
         return {"error": str(e)}
 
+# Function to learn the configuration using pyATS
+def execute_show_run():
+    try:
+        # Load the testbed
+        print("Loading testbed...")
+        testbed = loader.load('testbed.yaml')
+
+        # Access the device from the testbed
+        device = testbed.devices['Cat8000V']
+
+        # Connect to the device
+        print("Connecting to device...")
+        device.connect()
+
+        # Use the pyATS learn function to gather the configuration
+        print("Learning configuration...")
+        learned_config = device.execute('show run brief')
+
+        # Close the connection
+        print("Disconnecting from device...")
+        device.disconnect()
+
+        # Return the learned configuration as JSON
+        return learned_config
+    except Exception as e:
+        # Handle exceptions and provide error information
+        return {"error": str(e)}
+
+# Function to learn the configuration using pyATS
+def execute_show_logging():
+    try:
+        # Load the testbed
+        print("Loading testbed...")
+        testbed = loader.load('testbed.yaml')
+
+        # Access the device from the testbed
+        device = testbed.devices['Cat8000V']
+
+        # Connect to the device
+        print("Connecting to device...")
+        device.connect()
+
+        # Use the pyATS learn function to gather the configuration
+        print("Learning configuration...")
+        learned_logs = device.execute('show logging last 250')
+
+        # Close the connection
+        print("Disconnecting from device...")
+        device.disconnect()
+
+        # Return the learned configuration as JSON
+        return learned_logs
+    except Exception as e:
+        # Handle exceptions and provide error information
+        return {"error": str(e)}
+
 # Define the custom tool using the langchain `tool` decorator
 @tool
 def run_show_command_tool(command: str) -> dict:
@@ -162,6 +218,18 @@ def apply_configuration_tool(config_commands: str) -> dict:
     """Apply configuration commands on the router using pyATS."""
     return apply_device_configuration(config_commands)
 
+# Define the custom tool for learning the configuration
+@tool
+def learn_config_tool(dummy_input: str = "") -> dict:
+    """Excute show run brief on the router using pyATS to return the running-configuration."""
+    return execute_show_run()
+
+# Define the custom tool for learning the configuration
+@tool
+def learn_logging_tool(dummy_input: str = "") -> dict:
+    """Execute show logging on the router using pyATS and return it as raw text."""
+    return execute_show_logging()
+
 # ============================================================
 # Define the agent with a custom prompt template
 # ============================================================
@@ -171,7 +239,7 @@ def apply_configuration_tool(config_commands: str) -> dict:
 llm = ChatOpenAI(model_name="gpt-4o")
 
 # Create a list of tools
-tools = [run_show_command_tool, check_supported_command_tool, apply_configuration_tool]
+tools = [run_show_command_tool, check_supported_command_tool, apply_configuration_tool, learn_config_tool, learn_logging_tool]
 
 # Render text descriptions for the tools for inclusion in the prompt
 tool_descriptions = render_text_description(tools)
@@ -190,15 +258,17 @@ Assistant is a network assistant with the capability to run tools to gather info
 **Important Guidelines:**
 
 1. **If you are certain of the command for retrieving information, use the 'run_show_command_tool' to execute it.**
-2. **If you are unsure of the command or if there is ambiguity, use the 'check_supported_command_tool' to verify the command or get a list of available commands.**
-3. **If the 'check_supported_command_tool' finds a valid command, automatically use 'run_show_command_tool' to run that command.**
-4. **For configuration changes, use the 'apply_configuration_tool' with the necessary configuration string (single or multi-line).**
-5. **Do NOT use any command modifiers such as pipes (`|`), `include`, `exclude`, `begin`, `redirect`, or any other modifiers.**
-6. **If the command is not recognized, always use the 'check_supported_command_tool' to clarify the command before proceeding.**
+2. **If you need access to the full running configuration, use the 'learn_config_tool' to retrieve it.**
+3. **If you are unsure of the command or if there is ambiguity, use the 'check_supported_command_tool' to verify the command or get a list of available commands.**
+4. **If the 'check_supported_command_tool' finds a valid command, automatically use 'run_show_command_tool' to run that command.**
+5. **For configuration changes, use the 'apply_configuration_tool' with the necessary configuration string (single or multi-line).**
+6. **Do NOT use any command modifiers such as pipes (`|`), `include`, `exclude`, `begin`, `redirect`, or any other modifiers.**
+7. **If the command is not recognized, always use the 'check_supported_command_tool' to clarify the command before proceeding.**
 
 **Using the Tools:**
 
 - If you are confident about the command to retrieve data, use the 'run_show_command_tool'.
+- If you need access to the full running configuration, use 'learn_config_tool'.
 - If there is any doubt or ambiguity, always check the command first with the 'check_supported_command_tool'.
 - If you need to apply a configuration change, use 'apply_configuration_tool' with the appropriate configuration commands.
 
@@ -216,12 +286,21 @@ Example:
 Thought: Do I need to use a tool? Yes  
 Action: check_supported_command_tool  
 Action Input: "show ip access-lists"  
-Observation: "The closest supported command is 'show ip access-list'."  
+Observation: "The closest supported command is 'show ip access-list'."
 
 Thought: Do I need to use a tool? Yes  
 Action: run_show_command_tool  
 Action Input: "show ip access-list"  
-Observation: [parsed output here]  
+Observation: [parsed output here]
+
+If you need access to the full running configuration:
+
+Example:
+
+Thought: Do I need to use a tool? Yes  
+Action: learn_config_tool  
+Action Input: (No input required)  
+Observation: [configuration here]
 
 If you need to apply a configuration:
 
@@ -251,6 +330,7 @@ Assistant has access to the following tools:
 - check_supported_command_tool: Finds and returns the closest supported commands.
 - run_show_command_tool: Executes a supported 'show' command on the network device and returns the parsed output.
 - apply_configuration_tool: Applies the provided configuration commands on the network device.
+- learn_config_tool: Learns the running configuration from the network device and returns it as JSON.
 
 Begin!
 
